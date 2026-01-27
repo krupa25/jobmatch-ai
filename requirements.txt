@@ -56,4 +56,8 @@ uvicorn
 streamlit
 requests
 python-dotenv
+pdfplumber
+pypdf
+python-multipart
+
 
