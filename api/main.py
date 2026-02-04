@@ -4,6 +4,15 @@ from fastapi import UploadFile, File
 import tempfile
 import os
 from api.services.resume_parser import parse_resume_pdf
+import uuid
+from pydantic import BaseModel
+from rag.chunking import chunk_text
+from rag.embeddings import embed_texts
+from rag.vector_store import (
+    save_embeddings_and_metadata,
+    load_embeddings_and_metadata,
+    cosine_search,
+)
 
 # Creating an app object
 # This is the main Fast API application
@@ -61,3 +70,63 @@ async def parse_resume_endpoint(resume: UploadFile = File(...)):
         os.remove(temp_path)
 
 
+class IndexRequest(BaseModel):
+    raw_text: str  # resume text from Day 2 output
+
+class RetrieveRequest(BaseModel):
+    resume_id: str
+    job_description: str
+    top_k: int = 5
+
+@app.post("/api/index_resume")
+def index_resume(req: IndexRequest):
+    """
+    Takes resume text, chunks it, creates embeddings,
+    builds a FAISS index, and saves it to disk.
+    """
+    # Create a unique ID for this resume
+    resume_id = str(uuid.uuid4())
+
+    # Chunk the resume text
+    chunks = chunk_text(req.raw_text)
+
+    # Convert chunk texts into embeddings
+    texts = [c["chunk_text"] for c in chunks]
+    embeddings = embed_texts(texts)
+
+    # Build FAISS index
+    #index = build_faiss_index(embeddings)
+
+    # Save embeddings + metadata (instead of FAISS index)
+    save_embeddings_and_metadata(resume_id, embeddings, chunks)
+
+    return {"resume_id": resume_id, "num_chunks": len(chunks)}
+
+@app.post("/api/retrieve")
+def retrieve(req: RetrieveRequest):
+    """
+    Takes a resume_id and job description,
+    searches the resume chunks and returns top-k relevant ones.
+    """
+   # Load stored embeddings + metadata
+    embeddings, chunks = load_embeddings_and_metadata(req.resume_id)
+
+    # Embed job description
+    query_vec = embed_texts([req.job_description])  # shape (1, dim)
+
+    # Search using cosine similarity
+    scores, idxs = cosine_search(embeddings, query_vec, top_k=req.top_k)
+
+
+    results = []
+    for score, i in zip(scores, idxs):
+        if i == -1:
+            continue
+        results.append({
+            "score": float(score),
+            "chunk": chunks[i]["chunk_text"],
+            "start_char": chunks[i]["start_char"],
+            "end_char": chunks[i]["end_char"],
+        })
+
+    return {"resume_id": req.resume_id, "results": results}

@@ -7,28 +7,25 @@ transfroms it into cleaner text and simpler sections organized.
 import re
 # Type hint for better readability
 from typing import Dict
-import pdfplumber #Better PDF Extraction
 from pypdf import PdfReader # Fall back PDF extractor
 
 def extract_text_with_pdfplumber(file_path: str) -> str:
     """
-    Extract text from a PDF using pdfplumber.
-    This often gives better text for resumes than basic PDF readers.
+    Try pdfplumber extraction, but import pdfplumber ONLY inside this function.
+    If pdfplumber (or Pillow) is broken, we safely return "" and fallback to pypdf.
     """
+    try:
+        import pdfplumber  # lazy import (only happens when function is called)
+    except Exception:
+        # If pdfplumber can't import, return empty so fallback is used
+        return ""
 
-    all_pages_text = [] # Store text page by page
-
-    # Open PDF file
+    all_pages_text = []
     with pdfplumber.open(file_path) as pdf:
-        # Loop through each page
         for page in pdf.pages:
-        # Extract text from page
-        # Sometimes extract_text() retuens None, so we default to ""
-
             page_text = page.extract_text() or ""
             all_pages_text.append(page_text)
 
-    # Join all pages into one big string
     return "\n".join(all_pages_text)
 
 def extract_text_with_pypdf(file_path: str) -> str:
