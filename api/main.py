@@ -13,6 +13,7 @@ from rag.vector_store import (
     load_embeddings_and_metadata,
     cosine_search,
 )
+from rag.guardrails import sanitize_text, build_grounded_context
 
 # Creating an app object
 # This is the main Fast API application
@@ -130,3 +131,59 @@ def retrieve(req: RetrieveRequest):
         })
 
     return {"resume_id": req.resume_id, "results": results}
+
+
+@app.post("/api/grounded_retrieve")
+def grounded_retrieve(req: RetrieveRequest):
+    """
+    Day 4 endpoint:
+    1) Retrieve top-k chunks (semantic search)
+    2) Sanitize each chunk to remove injection-like instructions
+    3) Return:
+       - raw chunk
+       - sanitized chunk
+       - flags
+       - grounded_context string (LLM-ready)
+    """
+
+    # 1) Load stored embeddings + chunks (your Day 3 storage)
+    embeddings, chunks = load_embeddings_and_metadata(req.resume_id)
+
+    # 2) Embed the job description
+    query_vec = embed_texts([req.job_description])
+
+    # 3) Search top-k chunks
+    scores, idxs = cosine_search(embeddings, query_vec, top_k=req.top_k)
+
+    evidence = []
+
+    # 4) For each retrieved chunk, sanitize it
+    for score, i in zip(scores, idxs):
+        if i == -1:
+            continue
+
+        raw_chunk = chunks[i]["chunk_text"]
+
+        # Sanitize chunk (removes injection-like lines)
+        guard = sanitize_text(raw_chunk)
+
+        evidence.append({
+            "score": float(score),
+            "chunk_id": int(i),
+            "raw_chunk": raw_chunk,
+            "sanitized_chunk": guard["sanitized_text"],
+            "removed_lines": guard["removed_lines"],
+            "flags": guard["flags"],  # why lines were removed
+            "start_char": chunks[i]["start_char"],
+            "end_char": chunks[i]["end_char"],
+        })
+
+    # 5) Build LLM-ready grounded context
+    grounded_context = build_grounded_context(evidence, req.job_description)
+
+    return {
+        "resume_id": req.resume_id,
+        "top_k": req.top_k,
+        "evidence": evidence,
+        "grounded_context": grounded_context
+    }
